@@ -5,8 +5,8 @@ uses baseunix, termio, sysutils, dateutils;
 const
     { NUMERICAL CONSTANTS }
     STDIN_FILENO = 0;
-    ROWS_FIELD   = 20;
-    COLS_FIELD   = 14;
+    ROWS_FIELD   = 12;
+    COLS_FIELD   = 12;
     SIZE_SNAKE   = 4;
     MOVE_INTERVAL = 300;
 
@@ -385,10 +385,9 @@ var
     buffer: array[0..255] of Char;
     vGame: Game;
     quit: Boolean;
-    fdSet: TFDSet;
-    dir: Direction;
+    dir, lastDir: Direction;
     lastMoveTime, currentTime: TDateTime;
-    timeout: TTimeval;
+    bytesRead: Integer;
 
 begin
     Randomize;
@@ -405,52 +404,40 @@ begin
     newTerm.c_cc[VTIME] := 0;
     TCSetAttr(STDIN_FILENO, TCSAFLUSH, newTerm);
 
+    fpFcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK);
+
     GameStart(vGame, ROWS_FIELD, COLS_FIELD, SIZE_SNAKE);
     PrintGame(vGame);
+    dir := Up;
+    lastDir := Up;
     quit := False;
 
     lastMoveTime := Now;
 
     while not quit do
     begin
-        fpFD_ZERO(fdSet);
-        fpFD_SET(STDIN_FILENO, fdSet);
-        timeout.tv_sec := 0;
-        timeout.tv_usec := MOVE_INTERVAL * 1000 + 50000;
+        currentTime := Now;
 
-        dir := GetDirection(vGame, vGame.snake_head.row, vGame.snake_head.col);
-        if fpSelect(STDIN_FILENO + 1, @fdSet, nil, nil, @timeout) > 0 then
+        bytesRead := fpRead(STDIN_FILENO, buffer, SizeOf(buffer));
+        if bytesRead > 0 then
         begin
-            fpRead(STDIN_FILENO, buffer, SizeOf(buffer));
             case buffer[0] of
                 'q': break;
-                'w':
-                    begin
-                        if dir <> Down then dir := Up
-                    end;
-                'a':
-                    begin
-                        if dir <> Right then dir := Left
-                    end;
-                's':
-                    begin
-                        if dir <> Up then dir := Down
-                    end;
-                'd':
-                    begin
-                        if dir <> Left then dir := Right
-                    end;
+                'w': if lastDir <> Down then dir := Up;
+                'a': if lastDir <> Right then dir := Left;
+                's': if lastDir <> Up then dir := Down;
+                'd': if lastDir <> Left then dir := Right;
             end;
         end;
-        currentTime := Now;
-        if MilliSecondsBetween(lastMoveTime, currentTime) < MOVE_INTERVAL then
+
+        if MilliSecondsBetween(lastMoveTime, currentTime) >= MOVE_INTERVAL then
         begin
-            Sleep(MOVE_INTERVAL - MilliSecondsBetween(lastMoveTime, currentTime));
+            quit := not MoveSnake(vGame, dir);
+            lastMoveTime := currentTime;
+            lastDir := dir;
+            ResetTerminal(vGame);
+            PrintGame(vGame);
         end;
-        quit := not MoveSnake(vGame, dir);
-        lastMoveTime := Now;
-        ResetTerminal(vGame);
-        PrintGame(vGame);
     end;
 
     TCSetAttr(STDIN_FILENO, TCSANOW, oldTerm);
